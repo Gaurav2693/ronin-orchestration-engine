@@ -1,0 +1,35 @@
+{
+  "name": "ronin-core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "RONIN Orchestration Engine — multi-model AI command center backend",
+  "main": "execution/runTask.mjs",
+  "scripts": {
+    "dev": "node --watch execution/runTask.mjs",
+    "server": "node api/chatServer.mjs",
+    "test:router": "node --test router/intelligence-router.test.mjs",
+    "test:compressor": "node --test memory/context-compressor.test.mjs",
+    "test:integration": "node --test api/integration.test.mjs",
+    "redis:start": "docker run -d --name ronin-redis -p 6379:6379 redis:7-alpine",
+    "qdrant:start": "docker run -d --name ronin-qdrant -p 6333:6333 -p 6334:6334 -v ./qdrant_storage:/qdrant/storage qdrant/qdrant",
+    "queue:dashboard": "npx bull-board"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@google/generative-ai": "^0.21.0",
+    "@qdrant/js-client-rest": "^1.17.0",
+    "bullmq": "^5.20.0",
+    "dotenv": "^17.3.1",
+    "groq-sdk": "^0.8.0",
+    "ioredis": "^5.4.0",
+    "openai": "^4.70.0",
+    "zod": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.3.0",
+    "jest": "^30.3.0"
+  }
+}
