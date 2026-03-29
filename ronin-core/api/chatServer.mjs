@@ -90,6 +90,15 @@ const state = {
   sseClients: new Map(),      // clientId → { res, heartbeatInterval }
   forgeSessions: new Map(),   // sessionId → Forge session state (from forgeSessionManager)
   bootTime: Date.now(),
+  // ── Cost Metrics Ledger (in-memory, updated per request) ──────────────
+  metricsLedger: {
+    requests:               0,
+    estimatedInputTokens:   0,
+    estimatedOutputTokens:  0,
+    estimatedCostUsd:       0.0,
+    baselineCostUsd:        0.0,  // GPT-4o equivalent cost
+    cyclesStarted:          0,
+  },
 };
 
 // ─── 6 Named Agents (Seats) ────────────────────────────────────────────────
@@ -730,6 +739,7 @@ async function handleRequest(req, res) {
     state.threads.set(cycleId, []);
     state.activeCycleId = cycleId;
 
+    state.metricsLedger.cyclesStarted++;
     broadcastSSE('cycle_started', JSON.stringify({ cycle_id: cycleId }));
 
     return sendJSON(res, 200, cycle);
@@ -1484,6 +1494,13 @@ async function handleRequest(req, res) {
       state.forgeSessions.set(sessionId, { tokensIn: totalTokensIn, tokensOut: totalTokensOut, costUsd });
       sendSSE('done', { tokensIn: totalTokensIn, tokensOut: totalTokensOut, costUsd });
       broadcastSSE('chat.message.complete', JSON.stringify({ tokensIn: totalTokensIn, tokensOut: totalTokensOut, costUsd }));
+      // ── Update metrics ledger (gpt-4o baseline: $15/1M in, $60/1M out) ──
+      { const baselineUsd = (totalTokensIn * 0.000015) + (totalTokensOut * 0.00006);
+        state.metricsLedger.requests++;
+        state.metricsLedger.estimatedInputTokens  += totalTokensIn;
+        state.metricsLedger.estimatedOutputTokens += totalTokensOut;
+        state.metricsLedger.estimatedCostUsd      += costUsd;
+        state.metricsLedger.baselineCostUsd       += baselineUsd; }
 
     } catch (err) {
       sendSSE('error', { message: err.message ?? 'Stream failed' });
@@ -1790,6 +1807,51 @@ async function handleRequest(req, res) {
 
     req.on('close', () => child.kill());
     return; // response handled by SSE
+  }
+
+  // ─── GET /api/cost-metrics → Live cost dashboard data ───────────────────
+  if (method === 'GET' && pathname === '/api/cost-metrics') {
+    const uptime = Math.floor((Date.now() - state.bootTime) / 1000);
+    const m = state.metricsLedger;
+    const totalTokens = m.estimatedInputTokens + m.estimatedOutputTokens;
+    const savings     = Math.max(0, m.baselineCostUsd - m.estimatedCostUsd);
+    const savingsPct  = m.baselineCostUsd > 0
+      ? Math.round((savings / m.baselineCostUsd) * 100) : 0;
+    const avgCostPerRequest = m.requests > 0
+      ? m.estimatedCostUsd / m.requests : 0;
+    const avgCostPerCycle = m.cyclesStarted > 0
+      ? m.estimatedCostUsd / m.cyclesStarted : 0;
+    return sendJSON(res, 200, {
+      uptime_seconds:           uptime,
+      requests:                 m.requests,
+      cycles:                   m.cyclesStarted,
+      total_input_tokens:       m.estimatedInputTokens,
+      total_output_tokens:      m.estimatedOutputTokens,
+      total_tokens:             totalTokens,
+      estimated_cost_usd:       parseFloat(m.estimatedCostUsd.toFixed(6)),
+      baseline_cost_usd:        parseFloat(m.baselineCostUsd.toFixed(6)),
+      savings_usd:              parseFloat(savings.toFixed(6)),
+      savings_pct:              savingsPct,
+      avg_cost_per_request_usd: parseFloat(avgCostPerRequest.toFixed(6)),
+      avg_cost_per_cycle_usd:   parseFloat(avgCostPerCycle.toFixed(6)),
+      accuracy_note:            'Real token counts from Anthropic usage events',
+      generated_at:             new Date().toISOString(),
+    });
+  }
+
+  // ─── GET /dashboard → Flip-flap cost display (served from dashboard/) ───
+  if (method === 'GET' && pathname === '/dashboard') {
+    const __dir    = dirname(fileURLToPath(import.meta.url));
+    const dashPath = resolve(__dir, '../dashboard/index.html');
+    try {
+      const html = readFileSync(dashPath, 'utf8');
+      setCORS(res);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch {
+      sendError(res, 404, 'Dashboard not found — ensure dashboard/index.html exists');
+    }
+    return;
   }
 
   // ─── 404 ────────────────────────────────────────────────────────────────

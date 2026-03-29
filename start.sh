@@ -130,6 +130,22 @@ start_engine() {
   fail "chatServer did not start within 6 seconds"
 }
 
+# ── Open cost dashboard in browser ─────────────────────────────────────────────
+
+open_dashboard() {
+  local url="http://localhost:${RONIN_PORT:-8787}/dashboard"
+  sleep 0.5   # brief pause so the browser gets a fully-booted server
+  if command -v open &>/dev/null; then
+    open "$url"
+    ok "Cost dashboard → $url"
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$url"
+    ok "Cost dashboard → $url"
+  else
+    warn "Could not auto-open browser. Visit: $url"
+  fi
+}
+
 # ── Start UI ───────────────────────────────────────────────────────────────────
 
 start_ui() {
@@ -166,7 +182,7 @@ run_tests() {
 echo ""
 echo -e "${BOLD}╔═══════════════════════════════════╗${RESET}"
 echo -e "${BOLD}║  RONIN Orchestration Engine       ║${RESET}"
-echo -e "${BOLD}║  Phase 11F — Integration Boot     ║${RESET}"
+echo -e "${BOLD}║  Phase 11G — Cost Engine + Dash   ║${RESET}"
 echo -e "${BOLD}╚═══════════════════════════════════╝${RESET}"
 echo ""
 
@@ -182,6 +198,7 @@ fi
 if [[ "$UI_ONLY" == false ]]; then
   check_engine_deps
   start_engine
+  open_dashboard &   # open in background so startup isn't blocked
 fi
 
 if [[ "$ENGINE_ONLY" == false ]]; then
@@ -194,6 +211,8 @@ log "Stack is live:"
 if [[ "$UI_ONLY" == false ]]; then
   dim "  chatServer  → http://localhost:${RONIN_PORT:-8787}"
   dim "  SSE stream  → http://localhost:${RONIN_PORT:-8787}/api/events"
+  dim "  Cost dash   → http://localhost:${RONIN_PORT:-8787}/dashboard"
+  dim "  Metrics API → http://localhost:${RONIN_PORT:-8787}/api/cost-metrics"
 fi
 if [[ "$ENGINE_ONLY" == false ]]; then
   dim "  Forge UI    → http://localhost:5173"

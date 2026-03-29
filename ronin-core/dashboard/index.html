@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RONIN · Cost Engine</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:          #0a0a0a;
+      --tile-bg:     #161616;
+      --tile-border: #242424;
+      --amber:       #FFA500;
+      --gold:        #FFD700;
+      --green:       #00E87A;
+      --dim:         #444444;
+      --text:        #F0F0F0;
+      --tile-w:      40px;
+      --tile-h:      58px;
+      --cols:        22;
+      --rows:        5;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', Courier, monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+    }
+    #ronin-header {
+      font-size: 11px;
+      letter-spacing: 0.35em;
+      color: var(--amber);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+      opacity: 0.9;
+    }
+    #board-wrap {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+    }
+    .accent-bar { display: flex; flex-direction: column; gap: 7px; }
+    .accent-seg {
+      width: 10px; height: 10px;
+      border-radius: 2px;
+      background: var(--amber);
+      transition: background 0.5s ease;
+    }
+    #tile-grid {
+      display: grid;
+      grid-template-columns: repeat(var(--cols), var(--tile-w));
+      grid-template-rows:    repeat(var(--rows), var(--tile-h));
+      gap: 3px;
+    }
+    .tile {
+      width: var(--tile-w);
+      height: var(--tile-h);
+      background: var(--tile-bg);
+      border: 1px solid var(--tile-border);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    /* Split-flap crease */
+    .tile::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 0; right: 0;
+      height: 1px;
+      background: var(--tile-border);
+      opacity: 0.7;
+    }
+    .tile span {
+      font-size: 26px;
+      font-weight: 800;
+      font-family: 'Courier New', monospace;
+      color: var(--text);
+      line-height: 1;
+      z-index: 1;
+      position: relative;
+    }
+    .tile.scrambling span { color: var(--amber); }
+    #status-bar {
+      margin-top: 20px;
+      display: flex;
+      gap: 28px;
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      color: var(--dim);
+      text-transform: uppercase;
+    }
+    #status-bar .live { color: var(--green); }
+    #status-bar .val  { color: var(--amber); }
+    #screen-label {
+      margin-top: 10px;
+      font-size: 9px;
+      letter-spacing: 0.3em;
+      color: #333;
+      text-transform: uppercase;
+      height: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="ronin-header">RONIN &middot; COST ENGINE &middot; V1.0</div>
+
+  <div id="board-wrap">
+    <div class="accent-bar" id="accent-left">
+      <div class="accent-seg"></div>
+      <div class="accent-seg"></div>
+    </div>
+    <div id="tile-grid"></div>
+    <div class="accent-bar" id="accent-right">
+      <div class="accent-seg"></div>
+      <div class="accent-seg"></div>
+    </div>
+  </div>
+
+  <div id="screen-label">&nbsp;</div>
+
+  <div id="status-bar">
+    <span><span class="live">&#9679;</span>&nbsp;LIVE</span>
+    <span>REQS:&nbsp;<span class="val" id="sb-reqs">-</span></span>
+    <span>CYCLES:&nbsp;<span class="val" id="sb-cycles">-</span></span>
+    <span>UPDATED:&nbsp;<span class="val" id="sb-time">--:--:--</span></span>
+  </div>
+
+  <script>
+    // ── Constants ─────────────────────────────────────────────────────────
+    const COLS = 22, ROWS = 5;
+    const CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$.,%-+ ';
+    const SCRAMBLE_BG = ['#FFA50022','#FFD70022','#FF660022','#FFFFFF11','#FFA50022'];
+    const ACCENT_CYCLE = ['#FFA500','#FFD700','#00E87A','#FF6600','#FFA500','#FFD700'];
+    let accentIdx = 0;
+
+    // ── Tile ─────────────────────────────────────────────────────────────
+    class Tile {
+      constructor() {
+        this.current = ' '; this.animating = false; this._t = null;
+        this.el   = document.createElement('div'); this.el.className = 'tile';
+        this.span = document.createElement('span'); this.el.appendChild(this.span);
+      }
+      set(c) {
+        this.current = c;
+        this.span.textContent = c === ' ' ? '' : c;
+        this.el.style.background = '';
+      }
+      scrambleTo(target, delay) {
+        if (target === this.current) return;
+        if (this._t) { clearInterval(this._t); this._t = null; }
+        this.animating = true;
+        setTimeout(() => {
+          this.el.classList.add('scrambling');
+          let n = 0, max = 7 + Math.floor(Math.random() * 5);
+          this._t = setInterval(() => {
+            this.span.textContent = CHARSET[Math.floor(Math.random() * CHARSET.length)];
+            this.el.style.background = SCRAMBLE_BG[n % SCRAMBLE_BG.length];
+            if (++n >= max) {
+              clearInterval(this._t); this._t = null;
+              this.el.style.background = '';
+              this.span.textContent = target === ' ' ? '' : target;
+              this.el.classList.remove('scrambling');
+              this.current = target; this.animating = false;
+            }
+          }, 60);
+        }, delay);
+      }
+    }
+    // ── Board ─────────────────────────────────────────────────────────────
+    class Board {
+      constructor(el) {
+        this.tiles = []; this.grid = []; this.busy = false;
+        for (let r = 0; r < ROWS; r++) {
+          const row = [], gc = [];
+          for (let c = 0; c < COLS; c++) {
+            const t = new Tile(); t.set(' '); el.appendChild(t.el);
+            row.push(t); gc.push(' ');
+          }
+          this.tiles.push(row); this.grid.push(gc);
+        }
+      }
+      show(lines) {
+        if (this.busy) return;
+        this.busy = true;
+        const ng = lines.map(line => {
+          const s = (line || '').toUpperCase().slice(0, COLS);
+          const pad = Math.max(0, Math.floor((COLS - s.length) / 2));
+          return (' '.repeat(pad) + s).padEnd(COLS, ' ').slice(0, COLS).split('');
+        });
+        // pad to ROWS
+        while (ng.length < ROWS) ng.push(Array(COLS).fill(' '));
+        let changed = false;
+        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+          if (ng[r][c] !== this.grid[r][c]) {
+            this.tiles[r][c].scrambleTo(ng[r][c], (r * COLS + c) * 11);
+            changed = true;
+          }
+        }
+        if (changed) {
+          accentIdx++;
+          document.querySelectorAll('.accent-seg').forEach(s =>
+            s.style.background = ACCENT_CYCLE[accentIdx % ACCENT_CYCLE.length]);
+        }
+        this.grid = ng;
+        setTimeout(() => { this.busy = false; }, 1600);
+      }
+    }
+    // ── Screen definitions ────────────────────────────────────────────────
+    const SCREEN_LABELS = [
+      'SAVINGS VS GPT-4O BASELINE',
+      'ACTUAL SPEND · CLAUDE ROUTING',
+      'AVERAGE COST PER REQUEST',
+      'ROUTING EFFICIENCY SCORE',
+      'TOTAL TOKENS PROCESSED',
+      'UPTIME & CYCLE COUNT',
+    ];
+
+    function fmtUsd(n) {
+      if (n === 0) return '$0.0000';
+      if (n < 0.01) return '$' + n.toFixed(6);
+      return '$' + n.toFixed(4);
+    }
+    function fmtTok(n) {
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+    function fmtUp(s) {
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sc = s % 60;
+      return (h ? h + 'H ' : '') + m + 'M ' + sc + 'S';
+    }
+
+    function buildScreens(m) {
+      return [
+        ['', 'SAVED VS BASELINE', '', fmtUsd(m.savings_usd), 'EST. GPT-4O DELTA'],
+        ['', 'ACTUAL SPEND', '', fmtUsd(m.estimated_cost_usd), 'CLAUDE ROUTING'],
+        ['', 'AVG COST / REQUEST', '', fmtUsd(m.avg_cost_per_request_usd), 'BLENDED RATE'],
+        ['', 'EFFICIENCY SCORE', '', m.savings_pct + '% SAVED', 'VS GPT-4O FULL'],
+        ['', 'TOKENS PROCESSED', '', fmtTok(m.total_tokens), 'INPUT + OUTPUT'],
+        ['', 'SERVER UPTIME', '', fmtUp(m.uptime_seconds), 'CYCLES: ' + m.cycles],
+      ];
+    }
+    // ── State & polling ───────────────────────────────────────────────────
+    const board = new Board(document.getElementById('tile-grid'));
+    let metrics = {
+      savings_usd: 0, estimated_cost_usd: 0, avg_cost_per_request_usd: 0,
+      savings_pct: 0, total_tokens: 0, uptime_seconds: 0,
+      cycles: 0, requests: 0,
+    };
+    let screenIdx = 0;
+
+    async function fetchMetrics() {
+      try {
+        const r = await fetch('/api/cost-metrics', { cache: 'no-store' });
+        if (!r.ok) return;
+        metrics = await r.json();
+        document.getElementById('sb-reqs').textContent   = metrics.requests;
+        document.getElementById('sb-cycles').textContent = metrics.cycles;
+        const t = new Date();
+        document.getElementById('sb-time').textContent =
+          t.toTimeString().slice(0, 8);
+      } catch { /* engine may be starting */ }
+    }
+
+    function showNext() {
+      if (board.busy) return;
+      const all = buildScreens(metrics);
+      const idx = screenIdx % all.length;
+      board.show(all[idx]);
+      document.getElementById('screen-label').textContent =
+        SCREEN_LABELS[idx] || '';
+      screenIdx++;
+    }
+
+    async function boot() {
+      // Splash frame
+      board.show(['', 'RONIN', '', 'COST ENGINE', 'STARTING...']);
+      document.getElementById('screen-label').textContent = 'INITIALISING';
+      await new Promise(r => setTimeout(r, 2200));
+      await fetchMetrics();
+      showNext();
+      setInterval(showNext, 5000);    // rotate every 5s
+      setInterval(fetchMetrics, 3000); // poll every 3s
+    }
+
+    boot();
+  </script>
+</body>
+</html>
